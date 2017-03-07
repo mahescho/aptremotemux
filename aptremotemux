@@ -26,11 +26,13 @@ parser.add_argument("-c", "--config", dest="config", type=str, help="path to con
 parser.add_argument("-C", "--command",dest="command", type=str, help="APT command to use, default: dist-upgrade", default="dist-upgrade")
 args = parser.parse_args()
 
+
 # read config
 execfile(args.config,globals(), globals())
 
+DEBUG=args.debug
 
-if args.debug:
+if DEBUG:
   import logging
   logging.basicConfig(level=logging.DEBUG)
 
@@ -48,7 +50,8 @@ PPW = args.panes - 1
 
 # construct URL
 URL = MKPROT + "://"+MKHOST + "/" + MKSITE + "/check_mk/view.py?view_name=aptupdates&output_format=json&_username=" + MKUSER + "&_secret=" + MKPASS
-logging.debug("URL: " + URL)
+if DEBUG:
+  logging.debug("URL: " + URL)
 
 # construct TERM
 TERM = "export TERM=" + TERM
@@ -72,7 +75,8 @@ def checkLD(h):
     if (l in h):
       cmd = "/usr/bin/ssh root@" + h.split('.',1)[0] + " ' " + TERM + ";" + APT + "'" + EXIT
       commands.append(cmd)
-      logging.debug(cmd)
+      if DEBUG:
+        logging.debug(cmd)
       return False
   return True
 
@@ -87,16 +91,19 @@ for i in range(len(problems)):
   if (SITES.has_key(problems[i][0])):
     cmd = "/usr/bin/ssh" + SSHAGENT + " root@" + SITES[problems[i][0]] + " \" ssh root@" + h.split('.',1)[0] + " ' " + TERM + ";" + APT + "'\"" + EXIT
     commands.append(cmd)
-    logging.debug(cmd)
+    if DEBUG:
+      logging.debug(cmd)
   else:
     # strip domain from loacal hosts as it may differ from WATO
     if (checkLD(h)):
       cmd = "/usr/bin/ssh root@" + h + " ' " + TERM + ";" + APT + "'" + EXIT
       commands.append(cmd)
-      logging.debug(cmd)
+      if DEBUG:
+        logging.debug(cmd)
   name = problems[i][0]+":"+problems[i][1]
   names.append(name)
-  logging.debug("Pane name: " + name)
+  if DEBUG:
+    logging.debug("Pane name: " + name)
 
 if len(commands) == 0:
   print("Nothing to do");
@@ -113,7 +120,8 @@ if args.l:
 # construct tmux session
 numwin = len(commands) // PPW
 numwin = numwin + 1 if (len(commands) % PPW > 0 ) else numwin;
-logging.debug("Number of Windows: " + str(numwin))
+if DEBUG:
+  logging.debug("Number of Windows: " + str(numwin))
 
 server = libtmux.Server()
 session = server.new_session("aptremotemux")
@@ -126,7 +134,8 @@ try:
   window = []
   for w in range(numwin-1):
     window.append(session.new_window(str(w)))
-    logging.debug("Created Window # " + str(w))
+    if DEBUG:
+      logging.debug("Created Window # " + str(w))
 
   wc = 0
   for w in session.list_windows():
@@ -137,7 +146,8 @@ try:
       w.select_layout("tiled")
       wc = wc + 1
       i = i + 1
-      logging.debug("Created pan # " + str(i) + "(" + str(wc) + ")")
+      if DEBUG:
+        logging.debug("Created pan # " + str(i) + "(" + str(wc) + ")")
 
   # run commands in panes and set pane title
   i = 0
@@ -151,11 +161,13 @@ try:
   session.attach_session()
 
 except:
-  session.kill_session()
+  print "Unexpected error:", sys.exc_info()[0]
+  server.kill_server()
   raise
 
 else:
-  session.kill_session()
+  server.kill_server()
+  exit(0)
 
 
 

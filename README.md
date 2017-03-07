@@ -44,7 +44,7 @@ aptremotemux uses a config file. The default name and location of the config fil
 /usr/local/etc/aptremotemux.conf
 ```
 
-Is contains pain Python varialbe definitions and it looks like this:
+It contains plain Python varialbes definitions and it looks like this:
 
 ```
 #!/usr/bin/env python
@@ -54,7 +54,7 @@ Is contains pain Python varialbe definitions and it looks like this:
 
 MKPROT = "https"                  # HTTP/HTTPS - Prorocol uesed by Multisite site
 MKHOST = "nagios.server.de"       # Multisite hostname
-MKSITE = "MHC"                    # Multisite site name
+MKSITE = "SITEID"                    # Multisite site name
 MKUSER = "auto"                   # WATO automation user see:
                                   # https://mathias-kettner.de/checkmk_multisite_automation.html
 MKPASS = "11122233344455566688"   # WATO automation user secret
@@ -63,7 +63,9 @@ TERM   = "xterm"                  # TERM to be used in SSH sessions
 # check_mk site IDs and targets for SSH as there is no way to get a list from WATO
 
 SITES = {
-"SITEID":"ssh.target.host",
+"SITEID1":"ssh.target1.host",
+"SITEID2":"ssh.target2.host",
+"SITEID3":"ssh.target3.host",
 }
 
 # local domains, hostnames get striped as used in WATO
