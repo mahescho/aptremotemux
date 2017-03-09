@@ -10,6 +10,7 @@ import argparse
 import sys
 from sys import exit
 import libtmux
+import logging
 
 
 
@@ -20,7 +21,8 @@ parser.add_argument("-l", "--list", dest="l", help="only list commands, do nothi
 parser.add_argument("-y", "--yes", dest="y", help="use apt with -y for automation", action="store_true", default=False)
 parser.add_argument("-A", "--agent", dest="A", help="use ssh with -A for agent forwarding", action="store_true", default=False)
 parser.add_argument("-e", "--exit", dest="e", help="auto exit after upgrade if exit code is zero", action="store_true", default=False)
-parser.add_argument("-d", "--debug", dest="debug", help="enabel console debug logging", action="store_true", default=False)
+parser.add_argument("-D", "--dryrun", dest="dryrun", help="display every thing, do nothing", action="store_true", default=False)
+parser.add_argument("-d", "--debug", dest="debug", type=str, help="enabel console logging, default is off", default="", choices=['info','debug'])
 parser.add_argument("-p", "--panes", dest="panes", type=int, help="maximum number of panes per window, default: 6", default=6)
 parser.add_argument("-c", "--config", dest="config", type=str, help="path to config filei, default: /usr/local/etc/aptremotemux.conf", default="/usr/local/etc/aptremotemux.conf")
 parser.add_argument("-C", "--command",dest="command", type=str, help="APT command to use, default: dist-upgrade", default="dist-upgrade")
@@ -30,15 +32,21 @@ args = parser.parse_args()
 # read config
 execfile(args.config,globals(), globals())
 
-DEBUG=args.debug
 
-if DEBUG:
-  import logging
-  logging.basicConfig(level=logging.DEBUG)
+# setup debugging
+logger = logging.getLogger()
 
+if (args.debug == "info"):
+  logger.setLevel(logging.INFO)
+elif (args.debug == "debug"):
+  logger.setLevel(logging.DEBUG)
+else:
+  logger.propagate = False
 
+# prepare variables form arguments
 APTAUTO = ' -y' if args.y else ''
 SSHAGENT = ' -A' if args.A else ''
+DRYRUN = args.dryrun
 
 # consturct APT command
 APT= "apt-get" + APTAUTO + " " + args.command
@@ -50,8 +58,7 @@ PPW = args.panes - 1
 
 # construct URL
 URL = MKPROT + "://"+MKHOST + "/" + MKSITE + "/check_mk/view.py?view_name=aptupdates&output_format=json&_username=" + MKUSER + "&_secret=" + MKPASS
-if DEBUG:
-  logging.debug("URL: " + URL)
+logging.info("URL: %s", URL)
 
 # construct TERM
 TERM = "export TERM=" + TERM
@@ -73,10 +80,9 @@ def checkLD(h):
   # strip domain from loacal hosts as it may differ from WATO
   for l in LOCDOMS:
     if (l in h):
-      cmd = "/usr/bin/ssh root@" + h.split('.',1)[0] + " ' " + TERM + ";" + APT + "'" + EXIT
+      cmd = "/usr/bin/ssh root@%s ' %s;%s'%s" % (h.split('.',1)[0], TERM, APT, EXIT)
       commands.append(cmd)
-      if DEBUG:
-        logging.debug(cmd)
+      logging.info(cmd)
       return False
   return True
 
@@ -89,21 +95,18 @@ for i in range(len(problems)):
     continue;
   # add relay SSH to hosts on remote sites and strip domain as it may differ from WATO
   if (SITES.has_key(problems[i][0])):
-    cmd = "/usr/bin/ssh" + SSHAGENT + " root@" + SITES[problems[i][0]] + " \" ssh root@" + h.split('.',1)[0] + " ' " + TERM + ";" + APT + "'\"" + EXIT
+    cmd = "/usr/bin/ssh %s root@%s \" ssh root@%s ' %s;%s'\"%s" % (SSHAGENT, SITES[problems[i][0]], h.split('.',1)[0], TERM, APT, EXIT)
     commands.append(cmd)
-    if DEBUG:
-      logging.debug(cmd)
+    logging.info(cmd)
   else:
     # strip domain from loacal hosts as it may differ from WATO
     if (checkLD(h)):
-      cmd = "/usr/bin/ssh root@" + h + " ' " + TERM + ";" + APT + "'" + EXIT
+      cmd = "/usr/bin/ssh root@%s ' %s;%s'%s" % (h, TERM, APT, EXIT)
       commands.append(cmd)
-      if DEBUG:
-        logging.debug(cmd)
+      logging.info(cmd)
   name = problems[i][0]+":"+problems[i][1]
   names.append(name)
-  if DEBUG:
-    logging.debug("Pane name: " + name)
+  logging.info("Pane name: %s", name)
 
 if len(commands) == 0:
   print("Nothing to do");
@@ -120,8 +123,7 @@ if args.l:
 # construct tmux session
 numwin = len(commands) // PPW
 numwin = numwin + 1 if (len(commands) % PPW > 0 ) else numwin;
-if DEBUG:
-  logging.debug("Number of Windows: " + str(numwin))
+logging.info("Number of Windows: %d", numwin)
 
 server = libtmux.Server()
 session = server.new_session("aptremotemux")
@@ -134,28 +136,28 @@ try:
   window = []
   for w in range(numwin-1):
     window.append(session.new_window(str(w)))
-    if DEBUG:
-      logging.debug("Created Window # " + str(w))
+    logging.info("Created Window # %d", w)
 
   wc = 0
   for w in session.list_windows():
     # split panes
     i = 0
-    while (i < PPW) and (wc < len(commands)-1):
+    wc += 1
+    while (i < PPW) and (wc < len(commands)):
       w.split_window()
       w.select_layout("tiled")
-      wc = wc + 1
-      i = i + 1
-      if DEBUG:
-        logging.debug("Created pan # " + str(i) + "(" + str(wc) + ")")
+      wc += 1
+      i += 1
+      logging.info("Created pan # %d (%d)", i, wc)
 
   # run commands in panes and set pane title
   i = 0
   for w in session.list_windows():
     for p in w.list_panes():
       p.send_keys(r"printf '\033]2;%s\033\\' '" + names[i] + "'")
-      p.send_keys(commands[i])
-      i = i + 1
+      if (not(DRYRUN)):
+        p.send_keys(commands[i])
+      i += 1
 
   # connect to session
   session.attach_session()

@@ -84,8 +84,8 @@ IGNORE = [
 ## USAGE
 
 ```
-usage: aptremotemux [-h] [-l] [-y] [-A] [-e] [-d] [-p PANES] [-c CONFIG]
-                    [-C COMMAND]
+usage: aptremotemux [-h] [-l] [-y] [-A] [-e] [-D] [-d {info,debug}] [-p PANES]
+                    [-c CONFIG] [-C COMMAND]
 
 Automats SSH connections in TMUX windows and panes for APT updates based on
 the status of the APT check of check_mk.
@@ -96,7 +96,9 @@ optional arguments:
   -y, --yes             use apt with -y for automation
   -A, --agent           use ssh with -A for agent forwarding
   -e, --exit            auto exit after upgrade if exit code is zero
-  -d, --debug           enabel console debug logging
+  -D, --dryrun          display every thing, do nothing
+  -d {info,debug}, --debug {info,debug}
+                        enabel console logging, default is off
   -p PANES, --panes PANES
                         maximum number of panes per window, default: 6
   -c CONFIG, --config CONFIG
