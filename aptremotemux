@@ -4,6 +4,7 @@
 # requires tmux 2.3 +
 
 import urllib2
+import ssl
 import json
 import os
 import argparse
@@ -54,7 +55,7 @@ APT= "apt-get" + APTAUTO + " " + args.command
 # add exit if -e flag is set
 EXIT = ' && exit' if args.e else ''
 
-PPW = args.panes - 1
+PPW = args.panes
 
 # construct URL
 URL = MKPROT + "://"+MKHOST + "/" + MKSITE + "/check_mk/view.py?view_name=aptupdates&output_format=json&_username=" + MKUSER + "&_secret=" + MKPASS
@@ -66,8 +67,12 @@ TERM = "export TERM=" + TERM
 
 # read view from check_mk
 
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+
+opener = urllib2.build_opener(urllib2.HTTPSHandler(context=ctx))
 req = urllib2.Request(URL)
-opener = urllib2.build_opener()
 f = opener.open(req)
 problems = json.loads(f.read())
 
@@ -123,7 +128,7 @@ if args.l:
 # construct tmux session
 numwin = len(commands) // PPW
 numwin = numwin + 1 if (len(commands) % PPW > 0 ) else numwin;
-logging.info("Number of Windows: %d", numwin)
+logging.info("Number of Windows: %d (Commands %d, Names %d, PPW %d, +1? %r ", numwin, len(commands), len(names), PPW, (len(commands) % PPW > 0 ))
 
 server = libtmux.Server()
 session = server.new_session("aptremotemux")
@@ -132,28 +137,36 @@ try:
   session.set_option("pane-border-status", "bottom", True)
   session.set_option("pane-border-format", " #P #T ", True)
 
-  # add windows
+  # add additional windows, window #1 already exisits
   window = []
   for w in range(numwin-1):
     window.append(session.new_window(str(w)))
-    logging.info("Created Window # %d", w)
+    logging.info("Created additional Window # %d", w+1)
 
-  wc = 0
+  # add additional panes, one pane on each windows already exisits
+  wc = 1
+  cc = 1
   for w in session.list_windows():
+    logging.info("Window # %d", wc)
     # split panes
     i = 0
-    wc += 1
-    while (i < PPW) and (wc < len(commands)):
+    while (i < PPW-1) and (cc < len(commands)):
+      logging.info("Created additional pane # %d (command # %d)", i+1, cc)
       w.split_window()
       w.select_layout("tiled")
-      wc += 1
+      cc += 1
       i += 1
-      logging.info("Created pan # %d (%d)", i, wc)
+    wc += 1
+    cc += 1
+
+  logging.info("windows: %d", len(session.list_windows()))
 
   # run commands in panes and set pane title
   i = 0
   for w in session.list_windows():
+    logging.info("panes: %d", len(w.list_panes()))
     for p in w.list_panes():
+      logging.info("Running command # %d (%s)",i,commands[i])
       p.send_keys(r"printf '\033]2;%s\033\\' '" + names[i] + "'")
       if (not(DRYRUN)):
         p.send_keys(commands[i])
