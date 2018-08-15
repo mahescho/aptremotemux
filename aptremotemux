@@ -46,11 +46,15 @@ else:
 
 # prepare variables form arguments
 APTAUTO = ' -y' if args.y else ''
+UCSAUTO = ' --noninteractive' if args.y else ''
 SSHAGENT = ' -A' if args.A else ''
 DRYRUN = args.dryrun
 
 # consturct APT command
 APT= "apt-get" + APTAUTO + " " + args.command
+
+# Univention Corporate Server commnd
+UCS = "univention-upgrade" + UCSAUTO
 
 # add exit if -e flag is set
 EXIT = ' && exit' if args.e else ''
@@ -85,7 +89,7 @@ def checkLD(h):
   # strip domain from loacal hosts as it may differ from WATO
   for l in LOCDOMS:
     if (l in h):
-      cmd = "/usr/bin/ssh root@%s ' %s;%s'%s" % (h.split('.',1)[0], TERM, APT, EXIT)
+      cmd = "/usr/bin/ssh root@%s ' %s;%s'%s" % (h.split('.',1)[0], TERM, CMD, EXIT)
       commands.append(cmd)
       logging.info(cmd)
       return False
@@ -98,15 +102,20 @@ for i in range(len(problems)):
   # ignore hosts in ignore list
   if (h in IGNORE):
     continue;
+  # set CMD for Debian or UCS
+  if (h in UCSHOSTS):
+    CMD = UCS;
+  else:
+    CMD = APT;
   # add relay SSH to hosts on remote sites and strip domain as it may differ from WATO
   if (SITES.has_key(problems[i][0])):
-    cmd = "/usr/bin/ssh %s root@%s \" ssh root@%s ' %s;%s'\"%s" % (SSHAGENT, SITES[problems[i][0]], h.split('.',1)[0], TERM, APT, EXIT)
+    cmd = "/usr/bin/ssh %s root@%s \" ssh root@%s ' %s;%s'\"%s" % (SSHAGENT, SITES[problems[i][0]], h.split('.',1)[0], TERM, CMD, EXIT)
     commands.append(cmd)
     logging.info(cmd)
   else:
     # strip domain from loacal hosts as it may differ from WATO
     if (checkLD(h)):
-      cmd = "/usr/bin/ssh root@%s ' %s;%s'%s" % (h, TERM, APT, EXIT)
+      cmd = "/usr/bin/ssh root@%s ' %s;%s'%s" % (h, TERM, CMD, EXIT)
       commands.append(cmd)
       logging.info(cmd)
   name = problems[i][0]+":"+problems[i][1]
