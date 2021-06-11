@@ -1,197 +1,224 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # requires tmux 2.3 +
 
-import urllib2
-import ssl
-import json
-import os
+import urllib3
 import argparse
 import sys
 from sys import exit
 import libtmux
 import logging
 
-
-
 # parse parameters
 
-parser = argparse.ArgumentParser(description="Automats SSH connections in TMUX windows and panes for APT updates based on the status of the APT check of check_mk.")
+parser = argparse.ArgumentParser(
+    description="Automates SSH connections in TMUX windows and panes for APT updates based on the status of the APT "
+                "check of check_mk.")
 parser.add_argument("-l", "--list", dest="l", help="only list commands, do nothing", action="store_true", default=False)
 parser.add_argument("-y", "--yes", dest="y", help="use apt with -y for automation", action="store_true", default=False)
-parser.add_argument("-A", "--agent", dest="A", help="use ssh with -A for agent forwarding", action="store_true", default=False)
-parser.add_argument("-e", "--exit", dest="e", help="auto exit after upgrade if exit code is zero", action="store_true", default=False)
-parser.add_argument("-D", "--dryrun", dest="dryrun", help="display every thing, do nothing", action="store_true", default=False)
-parser.add_argument("-d", "--debug", dest="debug", type=str, help="enabel console logging, default is off", default="", choices=['info','debug'])
-parser.add_argument("-p", "--panes", dest="panes", type=int, help="maximum number of panes per window, default: 6", default=6)
-parser.add_argument("-c", "--config", dest="config", type=str, help="path to config filei, default: /usr/local/etc/aptremotemux.conf", default="/usr/local/etc/aptremotemux.conf")
-parser.add_argument("-C", "--command",dest="command", type=str, help="APT command to use, default: dist-upgrade", default="dist-upgrade")
+parser.add_argument("-A", "--agent", dest="A", help="use ssh with -A for agent forwarding", action="store_true",
+                    default=False)
+parser.add_argument("-e", "--exit", dest="e", help="auto exit after upgrade if exit code is zero", action="store_true",
+                    default=False)
+parser.add_argument("-D", "--dryrun", dest="dryrun", help="display every thing, do nothing", action="store_true",
+                    default=False)
+parser.add_argument("-d", "--debug", dest="debug", type=str, help="enable console logging, default is off", default="",
+                    choices=['info', 'debug'])
+parser.add_argument("-p", "--panes", dest="panes", type=int, help="maximum number of panes per window, default: 6",
+                    default=6)
+parser.add_argument("-c", "--config", dest="config", type=str,
+                    help="path to config file, default: /usr/local/etc/aptremotemux.conf",
+                    default="/usr/local/etc/aptremotemux.conf")
+parser.add_argument("-C", "--command", dest="command", type=str, help="APT command to use, default: dist-upgrade",
+                    default="dist-upgrade")
 args = parser.parse_args()
 
+# Config variables overridden by config file
+MKPROT = ""  # HTTP/HTTPS - Protocol used by Multisite site
+MKHOST = ""  # Multisite hostname
+MKSITE = ""  # Multisite site name
+MKUSER = ""  # WATO automation user see: https://mathias-kettner.de/checkmk_multisite_automation.html
+MKPASS = ""  # WATO automation user secret
+TERM = ""  # TERM to be used in SSH sessions
+# check_mk site IDs and targets for SSH as there is no way to get a list from WATO
+SITES = {}
+# local domains, hostnames get striped as used in WATO
+LOCDOMS = []
+# local sites, no SSH to status host required
+LOCSITES = []
+# hosts to ignore as defined in WATO
+IGNORE = []
+# Univention Corporate Server Hosts require an other command
+UCSHOSTS = []
 
-# read config
-execfile(args.config,globals(), globals())
 
+# read config override above variables
+exec(open(args.config).read(), globals())
 
 # setup debugging
 logger = logging.getLogger()
 
-if (args.debug == "info"):
-  logger.setLevel(logging.INFO)
-elif (args.debug == "debug"):
-  logger.setLevel(logging.DEBUG)
+if args.debug == "info":
+    logger.setLevel(logging.INFO)
+elif args.debug == "debug":
+    logger.setLevel(logging.DEBUG)
 else:
-  logger.propagate = False
+    logger.propagate = False
 
 # prepare variables form arguments
 APTAUTO = ' -y' if args.y else ''
-UCSAUTO = ' --noninteractive' if args.y else ''
 SSHAGENT = ' -A' if args.A else ''
 DRYRUN = args.dryrun
 
-# consturct APT command
-APT= "apt-get" + APTAUTO + " " + args.command
+# construct APT command
+APT = "apt-get" + APTAUTO + " " + args.command
 
-# Univention Corporate Server commnd
-UCS = "univention-upgrade" + UCSAUTO
+# Univention Corporate Server command
+UCS = "/usr/share/univention-updater/univention-actualise --dist-upgrade"
 
 # add exit if -e flag is set
 EXIT = ' && exit' if args.e else ''
 
 PPW = args.panes
 
-# construct URL
-URL = MKPROT + "://"+MKHOST + "/" + MKSITE + "/check_mk/view.py?view_name=aptupdates&output_format=json&_username=" + MKUSER + "&_secret=" + MKPASS
-logging.info("URL: %s", URL)
-
 # construct TERM
 TERM = "export TERM=" + TERM
 
+# init urllib3 with accepting self signed certificates
+urllib3.disable_warnings()
+c = urllib3.HTTPSConnectionPool(MKHOST, port=443, cert_reqs='CERT_NONE', assert_hostname=False)
+
+# construct URL to read view from check_mk
+URL = MKPROT + "://" + MKHOST + "/" + MKSITE + \
+      "/check_mk/view.py?view_name=aptupdates&output_format=python&_username=" + MKUSER + "&_secret=" + MKPASS
+logging.info("URL: %s", URL)
 
 # read view from check_mk
-
-ctx = ssl.create_default_context()
-ctx.check_hostname = False
-ctx.verify_mode = ssl.CERT_NONE
-
-opener = urllib2.build_opener(urllib2.HTTPSHandler(context=ctx))
-req = urllib2.Request(URL)
-f = opener.open(req)
-problems = json.loads(f.read())
+req = c.request('GET', URL)
+problems = eval(req.data)
 
 problems.remove(problems[0])
+
+# construct check_mk API URL to read sites and status hosts
+URL = MKPROT + "://" + MKHOST + "/" + MKSITE + \
+      "/check_mk/webapi.py?action=get_all_sites&output_format=python&_username=" + MKUSER + "&_secret=" + MKPASS
+logging.info("URL: %s", URL)
+
+req = c.request('GET', URL)
+
+res = eval(req.data)
+sites = res['result']['sites']
+
+c.close()
+
+SITES = {}
+for site in sites.items():
+    sh = site[1]['status_host']
+    if sh is not None:
+        SITES[site[0]] = sh[1]
 
 
 # generate command list
 
-def checkLD(h):
-  # strip domain from loacal hosts as it may differ from WATO
-  for l in LOCDOMS:
-    if (l in h):
-      cmd = "/usr/bin/ssh root@%s ' %s;%s'%s" % (h.split('.',1)[0], TERM, CMD, EXIT)
-      commands.append(cmd)
-      logging.info(cmd)
-      return False
-  return True
-
 commands = []
 names = []
-for i in range(len(problems)):
-  h = ""+problems[i][1]
-  # ignore hosts in ignore list
-  if (h in IGNORE):
-    continue;
-  # set CMD for Debian or UCS
-  if (h in UCSHOSTS):
-    CMD = UCS;
-  else:
-    CMD = APT;
-  # add relay SSH to hosts on remote sites and strip domain as it may differ from WATO
-  if (SITES.has_key(problems[i][0])):
-    cmd = "/usr/bin/ssh %s root@%s \" ssh root@%s ' %s;%s'\"%s" % (SSHAGENT, SITES[problems[i][0]], h.split('.',1)[0], TERM, CMD, EXIT)
-    commands.append(cmd)
-    logging.info(cmd)
-  else:
-    # strip domain from loacal hosts as it may differ from WATO
-    if (checkLD(h)):
-      cmd = "/usr/bin/ssh root@%s ' %s;%s'%s" % (h, TERM, CMD, EXIT)
-      commands.append(cmd)
-      logging.info(cmd)
-  name = problems[i][0]+":"+problems[i][1]
-  names.append(name)
-  logging.info("Pane name: %s", name)
+for problem in problems:
+    host = "" + problem[1]
+    # ignore hosts in ignore list
+    if host in IGNORE:
+        continue
+    # set CMD for Debian or UCS
+    if host in UCSHOSTS:
+        CMD = UCS
+    else:
+        CMD = APT
+    # add relay SSH to hosts on remote sites
+    if problem[0] in LOCSITES:
+        cmd = "/usr/bin/ssh -4 root@%s ' %s;%s'%s" % (host, TERM, CMD, EXIT)
+        commands.append(cmd)
+        logging.info(cmd)
+    else:
+        # strip domain from host name as it may differ from WATO
+        if host.find('.') > -1:
+            host = host.split('.', 1)[0]
+        cmd = "/usr/bin/ssh -4 %s root@%s \" ssh -4 root@%s ' %s;%s'\"%s" % (
+            SSHAGENT, SITES[problem[0]], host, TERM, CMD, EXIT)
+        commands.append(cmd)
+        logging.info(cmd)
+
+    name = problem[0] + ":" + problem[1]
+    names.append(name)
+    logging.info("Pane name: %s", name)
 
 if len(commands) == 0:
-  print("Nothing to do");
-  exit(0)
+    print("Nothing to do")
+    exit(0)
 
 # print commands and exit if -l i set
 if args.l:
-  for c in commands:
-     print(c)
+    for c in commands:
+        print(c)
 
-  print("Count: " + str(len(commands)))
-  exit(0)
+    print("Count: " + str(len(commands)))
+    exit(0)
 
 # construct tmux session
 numwin = len(commands) // PPW
-numwin = numwin + 1 if (len(commands) % PPW > 0 ) else numwin;
-logging.info("Number of Windows: %d (Commands %d, Names %d, PPW %d, +1? %r ", numwin, len(commands), len(names), PPW, (len(commands) % PPW > 0 ))
+numwin = numwin + 1 if (len(commands) % PPW > 0) else numwin
+logging.info("Number of Windows: %d (Commands %d, Names %d, PPW %d, +1? %r ", numwin, len(commands), len(names), PPW,
+             (len(commands) % PPW > 0))
 
 server = libtmux.Server()
 session = server.new_session("aptremotemux")
 
 try:
-  session.set_option("pane-border-status", "bottom", True)
-  session.set_option("pane-border-format", " #P #T ", True)
+    session.set_option("pane-border-status", "bottom", True)
+    session.set_option("pane-border-format", " #P #T ", True)
 
-  # add additional windows, window #1 already exisits
-  window = []
-  for w in range(numwin-1):
-    window.append(session.new_window(str(w)))
-    logging.info("Created additional Window # %d", w+1)
+    # add additional windows, window #1 already exisits
+    window = []
+    for w in range(numwin - 1):
+        window.append(session.new_window(str(w)))
+        logging.info("Created additional Window # %d", w + 1)
 
-  # add additional panes, one pane on each windows already exisits
-  wc = 1
-  cc = 1
-  for w in session.list_windows():
-    logging.info("Window # %d", wc)
-    # split panes
+    # add additional panes, one pane on each windows already exisits
+    wc = 1
+    cc = 1
+    for w in session.list_windows():
+        logging.info("Window # %d", wc)
+        # split panes
+        i = 0
+        while (i < PPW - 1) and (cc < len(commands)):
+            logging.info("Created additional pane # %d (command # %d)", i + 1, cc)
+            w.split_window()
+            w.select_layout("tiled")
+            cc += 1
+            i += 1
+        wc += 1
+        cc += 1
+
+    logging.info("windows: %d", len(session.list_windows()))
+
+    # run commands in panes and set pane title
     i = 0
-    while (i < PPW-1) and (cc < len(commands)):
-      logging.info("Created additional pane # %d (command # %d)", i+1, cc)
-      w.split_window()
-      w.select_layout("tiled")
-      cc += 1
-      i += 1
-    wc += 1
-    cc += 1
+    for w in session.list_windows():
+        logging.info("panes: %d", len(w.list_panes()))
+        for p in w.list_panes():
+            logging.info("Running command # %d (%s)", i, commands[i])
+            p.send_keys(r"printf '\033]2;%s\033\\' '" + names[i] + "'")
+            if not DRYRUN:
+                p.send_keys(commands[i])
+            i += 1
 
-  logging.info("windows: %d", len(session.list_windows()))
-
-  # run commands in panes and set pane title
-  i = 0
-  for w in session.list_windows():
-    logging.info("panes: %d", len(w.list_panes()))
-    for p in w.list_panes():
-      logging.info("Running command # %d (%s)",i,commands[i])
-      p.send_keys(r"printf '\033]2;%s\033\\' '" + names[i] + "'")
-      if (not(DRYRUN)):
-        p.send_keys(commands[i])
-      i += 1
-
-  # connect to session
-  session.attach_session()
+    # connect to session
+    session.attach_session()
 
 except:
-  print "Unexpected error:", sys.exc_info()[0]
-  server.kill_server()
-  raise
+    print("Unexpected error:", sys.exc_info()[0])
+    server.kill_server()
+    raise
 
 else:
-  server.kill_server()
-  exit(0)
-
-
-
+    server.kill_server()
+    exit(0)

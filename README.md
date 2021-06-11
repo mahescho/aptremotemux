@@ -8,9 +8,10 @@ It reads the [check_mk Multisite](https://mathias-kettner.de/check_mk.html) stat
 
 aptremotemux relies on:
 
+* Pthon 3
 * tmux 2.3 + with earlier versions naming of panes will not work
 * [libtmux](https://github.com/tony/libtmux)
-* Python modules: urllib2, json, os, argparse, sys
+* Python modules: urllib3, argparse, sys, libtmux, logging
 * A custom WATO view
 * A automation user called "auto" which has access to the custom WATO view
 
@@ -61,7 +62,6 @@ MKPASS = "11122233344455566688"   # WATO automation user secret
 TERM   = "xterm"                  # TERM to be used in SSH sessions
 
 # check_mk site IDs and targets for SSH as there is no way to get a list from WATO
-
 SITES = {
 "SITEID1":"ssh.target1.host",
 "SITEID2":"ssh.target2.host",
@@ -69,16 +69,20 @@ SITES = {
 }
 
 # local domains, hostnames get striped as used in WATO
-
 LOCDOMS = [
 ".example.com",
 ]
 
 # hosts to ignore as defined in WATO
-
 IGNORE = [
 "not.me.example.com",
 ]
+
+# local sites, no SSH to status host required
+LOCSITES = [
+    "mysitename",
+]
+
 ```
 
 ## USAGE
